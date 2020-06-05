@@ -1,5 +1,6 @@
 #include <asm/tlbflush.h>
 #include <asm/uaccess.h>
+#include <asm/io.h>
 #include <linux/fs.h>
 #include <linux/miscdevice.h>
 #include <linux/mm.h>
@@ -461,7 +462,16 @@ static struct miscdevice misc_dev = {
     .mode = S_IRWXUGO,
 };
 
-static struct file_operations umem_fops = {.owner = THIS_MODULE};
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0)
+static struct proc_ops umem_ops = { 0 };
+#define OP_lseek lseek
+#define OPCAT(a, b) a ## b
+#define OPS(o) OPCAT(umem_ops.proc_, o)
+#else
+static struct file_operations umem_ops = {.owner = THIS_MODULE};
+#define OP_lseek llseek
+#define OPS(o) umem_ops.o
+#endif
 
 static int open_umem(struct inode *inode, struct file *filp) { return 0; }
 static int has_umem = 0;
@@ -500,17 +510,17 @@ int init_module(void) {
   }
 #endif
 
-  umem_fops.llseek = (void*)kallsyms_lookup_name("memory_lseek");
-  umem_fops.read = (void*)kallsyms_lookup_name("read_mem");
-  umem_fops.write = (void*)kallsyms_lookup_name("write_mem");
-  umem_fops.mmap = (void*)kallsyms_lookup_name("mmap_mem");
-  umem_fops.open = open_umem;
+  OPS(OP_lseek) = (void*)kallsyms_lookup_name("memory_lseek");
+  OPS(read) = (void*)kallsyms_lookup_name("read_mem");
+  OPS(write) = (void*)kallsyms_lookup_name("write_mem");
+  OPS(mmap) = (void*)kallsyms_lookup_name("mmap_mem");
+  OPS(open) = open_umem;
 
-  if (!umem_fops.llseek || !umem_fops.read || !umem_fops.write ||
-      !umem_fops.mmap || !umem_fops.open) {
+  if (!OPS(OP_lseek) || !OPS(read) || !OPS(write) ||
+      !OPS(mmap) || !OPS(open)) {
     printk(KERN_ALERT"[pteditor-module] Could not create unprivileged memory access\n");
   } else {
-    proc_create("umem", 0666, NULL, &umem_fops);
+    proc_create("umem", 0666, NULL, &umem_ops);
     printk(KERN_INFO "[pteditor-module] Unprivileged memory access via /proc/umem set up\n");
     has_umem = 1;
   }
